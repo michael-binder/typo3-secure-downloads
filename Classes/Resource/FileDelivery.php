@@ -30,7 +30,12 @@ use Bitmotion\SecureDownloads\Parser\HtmlParser;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Resource\ResourceFactory;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
+use TYPO3\CMS\Core\Utility\HttpUtility;
 use TYPO3\CMS\Core\Utility\MathUtility;
+use TYPO3\CMS\Extbase\Configuration\ConfigurationManager;
+use TYPO3\CMS\Extbase\Mvc\Web\Routing\UriBuilder;
+use TYPO3\CMS\Extbase\Object\ObjectManager;
+use TYPO3\CMS\Frontend\ContentObject\ContentObjectRenderer;
 use TYPO3\CMS\Frontend\Utility\EidUtility;
 
 class FileDelivery
@@ -96,12 +101,35 @@ class FileDelivery
     protected $isProcessed = false;
 
     /**
+     * @var \TYPO3\CMS\Extbase\Object\ObjectManagerInterface
+     */
+    protected $objectManager;
+
+    /**
+     * @param \TYPO3\CMS\Extbase\Object\ObjectManagerInterface $objectManager
+     */
+    public function injectObjectManager(\TYPO3\CMS\Extbase\Object\ObjectManagerInterface $objectManager)
+    {
+        $this->objectManager = $objectManager;
+    }
+
+    /**
      * FileDelivery constructor.
      *
      * Check the access rights
      */
     public function __construct()
     {
+        $this->objectManager = GeneralUtility::makeInstance(ObjectManager::class);
+        /** @var ConfigurationManager $configurationManager */
+        $configurationManager = $this->objectManager->get(ConfigurationManager::class);
+        /** @var ContentObjectRenderer $contentObjectRenderer */
+        $contentObjectRenderer = $this->objectManager->get(ContentObjectRenderer::class);
+        \TYPO3\CMS\Frontend\Utility\EidUtility::initTCA();
+        $configurationManager->setContentObject($contentObjectRenderer);
+        /** @var UriBuilder $uriBuilder */
+        $uriBuilder = $this->objectManager->get(UriBuilder::class);
+
         $this->extensionConfiguration = $this->getExtensionConfiguration();
 
         $this->userId = (int)GeneralUtility::_GP('u') ?: 0;
@@ -137,17 +165,53 @@ class FileDelivery
         }
 
         if (!$this->hashValid()) {
-            $this->exitScript('Hash invalid! Access denied!');
+            $messageHashInvalid = $this->extensionConfiguration['messageHashInvalid'];
+            if (!empty($this->extensionConfiguration['redirectToPage'])) {
+                $pageUid = $this->extensionConfiguration['redirectToPage'];
+
+                $uri = $uriBuilder
+                    ->reset()
+                    ->setTargetPageUid($pageUid)
+                    ->setCreateAbsoluteUri(true)
+                    ->buildFrontendUri();
+
+                HttpUtility::redirect($uri);
+            }
+            $this->exitScript($messageHashInvalid);
         }
 
         if ($this->expiryTimeExceeded()) {
-            $this->exitScript('Link Expired. Access denied!');
+            $messageLinkExpired = $this->extensionConfiguration['messageLinkExpired'];
+            if (!empty($this->extensionConfiguration['redirectToPage'])) {
+                $pageUid = $this->extensionConfiguration['redirectToPage'];
+
+                $uri = $uriBuilder
+                    ->reset()
+                    ->setTargetPageUid($pageUid)
+                    ->setCreateAbsoluteUri(true)
+                    ->buildFrontendUri();
+
+                HttpUtility::redirect($uri);
+            }
+            $this->exitScript($messageLinkExpired);
         }
 
         $this->initializeUserAuthentication();
 
         if (($this->userId !== 0) && !$this->checkUserAccess() && !$this->checkGroupAccess()) {
-            $this->exitScript('Access denied for User!');
+            $messageAccessDenied = $this->extensionConfiguration['messageAccessDenied'];
+            if (!empty($this->extensionConfiguration['redirectToPage'])) {
+                $pageUid = $this->extensionConfiguration['redirectToPage'];
+
+                $uri = $uriBuilder
+                    ->reset()
+                    ->setTargetPageUid($pageUid)
+                    ->setCreateAbsoluteUri(true)
+                    ->buildFrontendUri();
+
+                HttpUtility::redirect($uri);
+            }
+            $this->exitScript($messageAccessDenied);
         }
     }
 
